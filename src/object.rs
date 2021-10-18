@@ -1,7 +1,31 @@
+#[derive(Debug, PartialEq)]
+pub enum Object {
+    Primitive(PrimitiveValue),
+}
+
+impl Clone for Object {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Primitive(value) => Self::Primitive(value.clone()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum PrimitiveValue {
     Noop,
     Integer(i64),
     Float(f64),
+}
+
+impl Clone for PrimitiveValue {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Noop => Self::Noop,
+            Self::Integer(value) => Self::Integer(*value),
+            Self::Float(value) => Self::Float(*value),
+        }
+    }
 }
 
 impl PrimitiveValue {
