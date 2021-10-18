@@ -77,10 +77,17 @@ impl Reader {
     }
 
     fn read_number(&mut self) -> Result<Token, ReaderError> {
+        let sign = if self.current()? == '-' {
+            self.next()?;
+            -1
+        } else {
+            1
+        };
+
         let mut whole = 0;
 
         let mut fractional: Option<i64> = None;
-        let mut fractional_power = 1;
+        let mut fractional_multiplier = 1;
 
         while !self.is_separator(&self.current()?) && self.current()? != '.' {
             let digit = self.current()? as i64 - '0' as i64;
@@ -93,7 +100,7 @@ impl Reader {
             whole += digit;
 
             if self.next_or_eof()? {
-                return Ok(Token::IntegerConstant(whole));
+                return Ok(Token::IntegerConstant(sign * whole));
             }
         }
 
@@ -110,7 +117,7 @@ impl Reader {
                 }
 
                 fractional = Some(fractional.unwrap() * 10 + digit);
-                fractional_power *= 10;
+                fractional_multiplier *= 10;
 
                 if self.next_or_eof()? {
                     break;
@@ -119,11 +126,13 @@ impl Reader {
         }
 
         if let Some(fractional) = fractional {
+            let fractional = fractional as f64 / fractional_multiplier as f64;
+
             Ok(Token::FloatConstant(
-                whole as f64 + fractional as f64 / fractional_power as f64,
+                sign as f64 * (whole as f64 + fractional),
             ))
         } else {
-            Ok(Token::IntegerConstant(whole))
+            Ok(Token::IntegerConstant(sign * whole))
         }
     }
 
@@ -182,7 +191,9 @@ impl Reader {
         while !self.is_eof() {
             self.skip_separators()?;
 
-            if ('0'..='9').contains(&self.current()?) {
+            if ('0'..='9').contains(&self.current()?)
+                || self.current()? == '-' && ('0'..='9').contains(&self.peek(1)?)
+            {
                 tokens.push(self.read_number()?);
             } else {
                 tokens.push(self.read_identifier()?);
