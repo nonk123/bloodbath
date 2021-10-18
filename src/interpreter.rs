@@ -1,131 +1,169 @@
+use crate::object::FunctionImplementation;
 use crate::object::Object;
 use crate::object::PrimitiveValue;
+use crate::object::ReferenceValue;
 use crate::reader::Reader;
 use crate::reader::ReaderError;
 use crate::reader::Token;
-
-struct Function {
-    argument_count: u16,
-    action: Box<dyn Fn(Vec<Object>) -> Object>,
-}
-
-impl Function {
-    fn new<F>(argument_count: u16, action: F) -> Self
-    where
-        F: Fn(Vec<Object>) -> Object + 'static,
-    {
-        Self {
-            argument_count,
-            action: Box::new(action),
-        }
-    }
-
-    fn call(&self, arguments: Vec<Object>) -> Object {
-        (self.action)(arguments)
-    }
-}
+use std::collections::HashMap;
+use std::rc::Rc;
 
 #[derive(Debug)]
 pub enum InterpreterError {
     ReadingFailed(ReaderError),
     ExpectedAnExpression(String),
-    VerbNotFound(String),
-    Unimplemented(String),
+    ExpectedAnIdentifier(String),
+    IllegalIdentity(String),
 }
 
-pub struct Bloodbath {}
+pub struct Bloodbath {
+    environment: HashMap<String, Object>,
+}
+
+type InterpreterResult = Result<Object, InterpreterError>;
 
 impl Bloodbath {
     pub fn new() -> Self {
-        Self {}
+        let mut environment = HashMap::new();
+
+        let make_builtin = |argument_count, builtin| {
+            Object::Reference(ReferenceValue::Function {
+                argument_count,
+                implementation: FunctionImplementation::Builtin(Rc::new(builtin)),
+            })
+        };
+
+        environment.insert(
+            "+".into(),
+            make_builtin(2, |args: Vec<Object>| {
+                let noop = Object::Primitive(PrimitiveValue::Noop);
+
+                match args[0] {
+                    Object::Primitive(PrimitiveValue::Integer(x)) => match args[1] {
+                        Object::Primitive(PrimitiveValue::Integer(y)) => {
+                            Object::Primitive(PrimitiveValue::Integer(x + y))
+                        }
+                        Object::Primitive(PrimitiveValue::Float(y)) => {
+                            Object::Primitive(PrimitiveValue::Float(x as f64 + y))
+                        }
+                        _ => noop,
+                    },
+                    Object::Primitive(PrimitiveValue::Float(x)) => match args[1] {
+                        Object::Primitive(PrimitiveValue::Integer(y)) => {
+                            Object::Primitive(PrimitiveValue::Float(x + y as f64))
+                        }
+                        Object::Primitive(PrimitiveValue::Float(y)) => {
+                            Object::Primitive(PrimitiveValue::Float(x + y))
+                        }
+                        _ => noop,
+                    },
+                    _ => noop,
+                }
+            }),
+        );
+
+        Self { environment }
     }
 
-    fn get_verb(&self, name: &String) -> Option<Function> {
-        match name.as_str() {
-            "+" => Some(Function::new(2, |args| match args[0] {
-                Object::Primitive(PrimitiveValue::Integer(a)) => match args[1] {
-                    // int + int = int
-                    Object::Primitive(PrimitiveValue::Integer(b)) => {
-                        Object::Primitive(PrimitiveValue::Integer(a + b))
-                    }
-                    // int + float = float
-                    Object::Primitive(PrimitiveValue::Float(b)) => {
-                        Object::Primitive(PrimitiveValue::Float(a as f64 + b))
-                    }
-                    // int + noop = noop
-                    _ => Object::Primitive(PrimitiveValue::Noop),
-                },
-                Object::Primitive(PrimitiveValue::Float(a)) => match args[1] {
-                    // float + int = float
-                    Object::Primitive(PrimitiveValue::Integer(b)) => {
-                        Object::Primitive(PrimitiveValue::Float(a + b as f64))
-                    }
-                    // float + float = float
-                    Object::Primitive(PrimitiveValue::Float(b)) => {
-                        Object::Primitive(PrimitiveValue::Float(a + b))
-                    }
-                    // float + noop = noop
-                    _ => Object::Primitive(PrimitiveValue::Noop),
-                },
-                // noop + any = noop
-                _ => Object::Primitive(PrimitiveValue::Noop),
-            })),
-            _ => None,
+    pub fn variable_get(&mut self, variable_name: &String) -> Object {
+        match self.environment.get(variable_name) {
+            Some(value) => value.clone(),
+            None => {
+                let noop = Object::Primitive(PrimitiveValue::Noop);
+                self.environment.insert(variable_name.clone(), noop.clone());
+                noop
+            }
         }
     }
 
-    fn eval_tokens(&self, mut tokens: &mut Vec<Token>) -> Result<Object, InterpreterError> {
-        match tokens.remove(0) {
-            Token::Identifier(name) => {
-                if name == "noop".to_string() {
-                    return Ok(Object::Primitive(PrimitiveValue::Noop));
-                }
+    pub fn variable_set(&mut self, variable_name: String, new_value: Object) {
+        self.environment.insert(variable_name, new_value.clone());
+    }
 
-                if name == "identity" {
-                    if tokens.is_empty() {
-                        return Err(InterpreterError::ExpectedAnExpression(
-                            "`identity` must be followed by a constant or a variable name".into(),
-                        ));
-                    }
+    fn eval_variable(&mut self, name: &String, tokens: &mut Vec<Token>) -> InterpreterResult {
+        let variable_value = self.variable_get(&name);
 
-                    return match tokens.remove(0) {
-                        Token::Identifier(name) => {
-                            if name == "noop".to_string() {
-                                Ok(Object::Primitive(PrimitiveValue::Noop))
-                            } else {
-                                // TODO: return a variable's value even if it refers to a function.
-                                Err(InterpreterError::Unimplemented("identity".into()))
-                            }
-                        }
-                        Token::IntegerConstant(value) => {
-                            Ok(Object::Primitive(PrimitiveValue::Integer(value)))
-                        }
-                        Token::FloatConstant(value) => {
-                            Ok(Object::Primitive(PrimitiveValue::Float(value)))
-                        }
-                    };
-                }
-
-                let verb = self
-                    .get_verb(&name)
-                    .ok_or(InterpreterError::VerbNotFound(name.clone()))?;
-
+        match variable_value {
+            Object::Reference(ReferenceValue::Function {
+                argument_count,
+                implementation,
+            }) => {
                 let mut arguments = Vec::new();
 
-                for count in 0..verb.argument_count {
+                for count in 0..argument_count {
                     if tokens.is_empty() {
                         return Err(InterpreterError::ExpectedAnExpression(format!(
                             "Expected {} arguments after `{}`, got {}",
-                            verb.argument_count,
-                            name.clone(),
-                            count
+                            argument_count, name, count
                         )));
                     }
 
-                    arguments.push(self.eval_tokens(&mut tokens)?);
+                    arguments.push(self.eval_expression(tokens)?);
                 }
 
-                Ok(verb.call(arguments))
+                Ok(implementation.call(arguments))
+            }
+            _ => Ok(variable_value.clone()),
+        }
+    }
+
+    fn eval_identity(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+        if tokens.is_empty() {
+            return Err(InterpreterError::ExpectedAnExpression(
+                "`identity` must be followed by a constant or a variable name".into(),
+            ));
+        }
+
+        return match tokens.remove(0) {
+            Token::Identifier(name) => {
+                if name == "noop" {
+                    Ok(Object::Primitive(PrimitiveValue::Noop))
+                } else if ["identity", "set"].contains(&name.as_str()) {
+                    Err(InterpreterError::IllegalIdentity(format!(
+                        "Cannot use `identity` on syntax form `{}`",
+                        name
+                    )))
+                } else {
+                    Ok(self.variable_get(&name))
+                }
+            }
+            Token::IntegerConstant(value) => Ok(Object::Primitive(PrimitiveValue::Integer(value))),
+            Token::FloatConstant(value) => Ok(Object::Primitive(PrimitiveValue::Float(value))),
+        };
+    }
+
+    fn eval_set(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+        let usage =
+            "`set` must be followed by a variable name and the variable's new value".to_string();
+
+        let variable_name = match tokens.remove(0) {
+            Token::Identifier(name) => name,
+            _ => return Err(InterpreterError::ExpectedAnIdentifier(usage)),
+        };
+
+        if tokens.is_empty() {
+            return Err(InterpreterError::ExpectedAnIdentifier(usage));
+        }
+
+        let new_value = self.eval_expression(tokens)?;
+
+        self.variable_set(variable_name, new_value.clone());
+
+        Ok(new_value)
+    }
+
+    fn eval_expression(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+        match tokens.remove(0) {
+            Token::Identifier(name) => {
+                if name == "noop" {
+                    return Ok(Object::Primitive(PrimitiveValue::Noop));
+                } else if name == "identity" {
+                    self.eval_identity(tokens)
+                } else if name == "set" {
+                    self.eval_set(tokens)
+                } else {
+                    self.eval_variable(&name, tokens)
+                }
             }
             Token::IntegerConstant(value) => Ok(Object::Primitive(PrimitiveValue::Integer(value))),
             Token::FloatConstant(value) => Ok(Object::Primitive(PrimitiveValue::Float(value))),
@@ -133,11 +171,11 @@ impl Bloodbath {
     }
 
     #[cfg(test)]
-    pub fn eval_str(&self, input: &str) -> Result<Object, InterpreterError> {
+    pub fn eval_str(&mut self, input: &str) -> InterpreterResult {
         self.eval(input.into())
     }
 
-    pub fn eval(&self, input: String) -> Result<Object, InterpreterError> {
+    pub fn eval(&mut self, input: String) -> InterpreterResult {
         let mut reader = Reader::new(input);
 
         let mut tokens = reader
@@ -147,7 +185,7 @@ impl Bloodbath {
         let mut result = Object::Primitive(PrimitiveValue::Noop);
 
         while !tokens.is_empty() {
-            result = self.eval_tokens(&mut tokens)?;
+            result = self.eval_expression(&mut tokens)?;
         }
 
         Ok(result)
@@ -160,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_eval() {
-        let bloodbath = Bloodbath::new();
+        let mut bloodbath = Bloodbath::new();
 
         assert_eq!(
             bloodbath.eval_str("noop").unwrap(),
@@ -185,6 +223,36 @@ mod tests {
         assert_eq!(
             bloodbath.eval_str("+ + 1 1 1").unwrap(),
             Object::Primitive(PrimitiveValue::Integer(3)),
+        );
+    }
+
+    #[test]
+    fn test_variables() {
+        let mut bloodbath = Bloodbath::new();
+
+        assert_eq!(
+            bloodbath.eval_str("set a 10").unwrap(),
+            Object::Primitive(PrimitiveValue::Integer(10))
+        );
+
+        assert_eq!(
+            bloodbath.eval_str("set b 20").unwrap(),
+            Object::Primitive(PrimitiveValue::Integer(20))
+        );
+
+        assert_eq!(
+            bloodbath.eval_str("set c + a b").unwrap(),
+            Object::Primitive(PrimitiveValue::Integer(30))
+        );
+
+        assert_eq!(
+            bloodbath.eval_str("set + c").unwrap(),
+            Object::Primitive(PrimitiveValue::Integer(30))
+        );
+
+        assert_eq!(
+            bloodbath.eval_str("+").unwrap(),
+            Object::Primitive(PrimitiveValue::Integer(30))
         );
     }
 }

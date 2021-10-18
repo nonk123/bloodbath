@@ -1,7 +1,5 @@
 use crate::interpreter::Bloodbath;
 use crate::interpreter::InterpreterError;
-use crate::object::Object;
-use crate::object::PrimitiveValue;
 use crate::reader::ReaderError;
 use std::io::Write;
 
@@ -9,18 +7,8 @@ mod interpreter;
 mod object;
 mod reader;
 
-fn object_to_string(object: Object) -> String {
-    match object {
-        Object::Primitive(value) => match value {
-            PrimitiveValue::Noop => "noop".into(),
-            PrimitiveValue::Integer(value) => value.to_string(),
-            PrimitiveValue::Float(value) => value.to_string(),
-        },
-    }
-}
-
 fn main() {
-    let bloodbath = Bloodbath::new();
+    let mut bloodbath = Bloodbath::new();
 
     println!("Welcome to the Bloodbath REPL!");
     println!("Enter an expression to evaluate it. Type \"quit\" to exit.");
@@ -55,14 +43,10 @@ fn main() {
         }
 
         match bloodbath.eval(line) {
-            Ok(object) => println!("{}", object_to_string(object)),
+            Ok(object) => println!("{:?}", object),
             Err(InterpreterError::ExpectedAnExpression(cause)) => println!("{}", cause),
-            Err(InterpreterError::VerbNotFound(verb_name)) => {
-                println!("Verb not found: {}", verb_name)
-            }
-            Err(InterpreterError::Unimplemented(part_name)) => {
-                println!("Part or form is not implemented: {}", part_name)
-            }
+            Err(InterpreterError::ExpectedAnIdentifier(cause)) => println!("{}", cause),
+            Err(InterpreterError::IllegalIdentity(cause)) => println!("{}", cause),
             Err(InterpreterError::ReadingFailed(err)) => match err {
                 ReaderError::EoF => println!("Unexpected end of file"),
                 ReaderError::ExpectedADigit(bad_char) => {
