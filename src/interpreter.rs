@@ -159,25 +159,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tokenise() {
-        let mut reader = Reader::new("123".into());
-        let result = reader.tokenise().unwrap();
-
-        assert!(result.len() == 1);
-        assert_eq!(result[0], Token::IntegerConstant(123));
-
-        let mut reader = Reader::new("123 42.69".into());
-        let result = reader.tokenise().unwrap();
-
-        assert!(result.len() == 2);
-
-        match result[1] {
-            Token::FloatConstant(value) => assert!((value - 42.69).abs() <= 1e-3),
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
     fn test_eval() {
         let bloodbath = Bloodbath::new();
 

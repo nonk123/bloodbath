@@ -192,6 +192,8 @@ mod tests {
     fn test_reader() {
         let tokens = Reader::new("+ + 0.5 -1.0 -1".into()).tokenise().unwrap();
 
+        assert_eq!(tokens.len(), 5);
+
         assert_eq!(tokens[0], Token::Identifier("+".into()));
         assert_eq!(tokens[1], Token::Identifier("+".into()));
 
