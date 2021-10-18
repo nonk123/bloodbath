@@ -29,6 +29,7 @@ impl Clone for PrimitiveValue {
 }
 
 impl PrimitiveValue {
+    #[cfg(test)]
     pub fn is_noop(&self) -> bool {
         match self {
             Self::Noop => true,
@@ -36,6 +37,7 @@ impl PrimitiveValue {
         }
     }
 
+    #[cfg(test)]
     pub fn get_integer(&self) -> Option<i64> {
         match self {
             Self::Integer(value) => Some(*value),
@@ -43,6 +45,7 @@ impl PrimitiveValue {
         }
     }
 
+    #[cfg(test)]
     pub fn get_float(&self) -> Option<f64> {
         match self {
             Self::Float(value) => Some(*value),

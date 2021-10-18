@@ -73,7 +73,7 @@ impl Reader {
     }
 
     fn is_separator(&self, input: &char) -> bool {
-        [' ', '\t', '\n', '\t'].contains(input)
+        [' ', '\t', '\n', '\r', '\t'].contains(input)
     }
 
     fn read_number(&mut self) -> Result<Token, ReaderError> {
@@ -166,21 +166,30 @@ impl Reader {
         }
     }
 
+    fn skip_separators(&mut self) -> Result<(), ReaderError> {
+        while self.is_separator(&self.current()?) {
+            if self.next_or_eof()? {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
     fn tokenise(&mut self) -> Result<Vec<Token>, ReaderError> {
         let mut tokens = Vec::new();
 
         while !self.is_eof() {
-            // Skip all whitespace. Return `result` upon reaching EoF.
-            while self.is_separator(&self.current()?) {
-                if self.next_or_eof()? {
-                    break;
-                }
-            }
+            self.skip_separators()?;
 
             if ('0'..='9').contains(&self.current()?) {
                 tokens.push(self.read_number()?);
             } else {
                 tokens.push(self.read_identifier()?);
+            }
+
+            if !self.is_eof() {
+                self.skip_separators()?;
             }
         }
 
@@ -190,8 +199,8 @@ impl Reader {
 
 #[derive(Debug)]
 pub enum InterpreterError {
-    ExpectedAnExpression,
     ReadingFailed(ReaderError),
+    ExpectedAnExpression(String),
     VerbNotFound(String),
     Unimplemented(String),
 }
@@ -246,7 +255,9 @@ impl Bloodbath {
 
                 if name == "identity" {
                     if tokens.is_empty() {
-                        return Err(InterpreterError::ExpectedAnExpression);
+                        return Err(InterpreterError::ExpectedAnExpression(
+                            "`identity` must be followed by a constant or a variable name".into(),
+                        ));
                     }
 
                     return match tokens.remove(0) {
@@ -269,13 +280,18 @@ impl Bloodbath {
 
                 let verb = self
                     .get_verb(&name)
-                    .ok_or(InterpreterError::VerbNotFound(name))?;
+                    .ok_or(InterpreterError::VerbNotFound(name.clone()))?;
 
                 let mut arguments = Vec::new();
 
-                for _ in 0..verb.argument_count {
+                for count in 0..verb.argument_count {
                     if tokens.is_empty() {
-                        return Err(InterpreterError::ExpectedAnExpression);
+                        return Err(InterpreterError::ExpectedAnExpression(format!(
+                            "Expected {} arguments after `{}`, got {}",
+                            verb.argument_count,
+                            name.clone(),
+                            count
+                        )));
                     }
 
                     arguments.push(self.eval_tokens(&mut tokens)?);
@@ -288,6 +304,7 @@ impl Bloodbath {
         }
     }
 
+    #[cfg(test)]
     pub fn eval_str(&self, input: &str) -> Result<Object, InterpreterError> {
         self.eval(input.into())
     }
