@@ -193,6 +193,7 @@ pub enum InterpreterError {
     ExpectedAnExpression,
     ReadingFailed(ReaderError),
     VerbNotFound(String),
+    Unimplemented(String),
 }
 
 pub struct Bloodbath {}
@@ -204,26 +205,32 @@ impl Bloodbath {
 
     fn get_verb(&self, name: &String) -> Option<Function> {
         match name.as_str() {
-            "identity" => Some(Function::new(1, |args| args[0].clone())),
             "+" => Some(Function::new(2, |args| match args[0] {
                 Object::Primitive(PrimitiveValue::Integer(a)) => match args[1] {
+                    // int + int = int
                     Object::Primitive(PrimitiveValue::Integer(b)) => {
                         Object::Primitive(PrimitiveValue::Integer(a + b))
                     }
+                    // int + float = float
                     Object::Primitive(PrimitiveValue::Float(b)) => {
                         Object::Primitive(PrimitiveValue::Float(a as f64 + b))
                     }
+                    // int + noop = noop
                     _ => Object::Primitive(PrimitiveValue::Noop),
                 },
                 Object::Primitive(PrimitiveValue::Float(a)) => match args[1] {
+                    // float + int = float
                     Object::Primitive(PrimitiveValue::Integer(b)) => {
                         Object::Primitive(PrimitiveValue::Float(a + b as f64))
                     }
+                    // float + float = float
                     Object::Primitive(PrimitiveValue::Float(b)) => {
                         Object::Primitive(PrimitiveValue::Float(a + b))
                     }
+                    // float + noop = noop
                     _ => Object::Primitive(PrimitiveValue::Noop),
                 },
+                // noop + any = noop
                 _ => Object::Primitive(PrimitiveValue::Noop),
             })),
             _ => None,
@@ -235,6 +242,29 @@ impl Bloodbath {
             Token::Identifier(name) => {
                 if name == "noop".to_string() {
                     return Ok(Object::Primitive(PrimitiveValue::Noop));
+                }
+
+                if name == "identity" {
+                    if tokens.is_empty() {
+                        return Err(InterpreterError::ExpectedAnExpression);
+                    }
+
+                    return match tokens.remove(0) {
+                        Token::Identifier(name) => {
+                            if name == "noop".to_string() {
+                                Ok(Object::Primitive(PrimitiveValue::Noop))
+                            } else {
+                                // TODO: return a variable's value even if it refers to a function.
+                                Err(InterpreterError::Unimplemented("identity".into()))
+                            }
+                        }
+                        Token::IntegerConstant(value) => {
+                            Ok(Object::Primitive(PrimitiveValue::Integer(value)))
+                        }
+                        Token::FloatConstant(value) => {
+                            Ok(Object::Primitive(PrimitiveValue::Float(value)))
+                        }
+                    };
                 }
 
                 let verb = self
