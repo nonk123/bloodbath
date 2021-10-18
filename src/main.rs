@@ -1,12 +1,13 @@
 use crate::interpreter::Bloodbath;
 use crate::interpreter::InterpreterError;
-use crate::interpreter::ReaderError;
 use crate::object::Object;
 use crate::object::PrimitiveValue;
+use crate::reader::ReaderError;
 use std::io::Write;
 
 mod interpreter;
 mod object;
+mod reader;
 
 fn object_to_string(object: Object) -> String {
     match object {
