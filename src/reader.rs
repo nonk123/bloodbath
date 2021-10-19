@@ -5,7 +5,7 @@ pub enum Token {
     FloatConstant(f64),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ReaderError {
     EoF,
     ExpectedADigit(char),

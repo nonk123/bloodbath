@@ -3,6 +3,7 @@ use crate::interpreter::InterpreterError;
 use crate::reader::ReaderError;
 use std::io::Write;
 
+mod builtins;
 mod interpreter;
 mod object;
 mod reader;

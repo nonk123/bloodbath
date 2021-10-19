@@ -4,37 +4,16 @@ use std::rc::Rc;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Object {
-    Primitive(PrimitiveValue),
-    Reference(ReferenceValue),
-}
-
-#[derive(Debug, PartialEq)]
-pub enum PrimitiveValue {
     Noop,
     Integer(i64),
     Float(f64),
+    Function {
+        argument_count: u16,
+        implementation: FunctionImplementation,
+    },
 }
 
-impl Clone for PrimitiveValue {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Noop => Self::Noop,
-            Self::Integer(value) => Self::Integer(*value),
-            Self::Float(value) => Self::Float(*value),
-        }
-    }
-}
-
-impl PrimitiveValue {
-    #[cfg(test)]
-    pub fn is_noop(&self) -> bool {
-        match self {
-            Self::Noop => true,
-            _ => false,
-        }
-    }
-
-    #[cfg(test)]
+impl Object {
     pub fn get_integer(&self) -> Option<i64> {
         match self {
             Self::Integer(value) => Some(*value),
@@ -42,21 +21,12 @@ impl PrimitiveValue {
         }
     }
 
-    #[cfg(test)]
     pub fn get_float(&self) -> Option<f64> {
         match self {
             Self::Float(value) => Some(*value),
             _ => None,
         }
     }
-}
-
-#[derive(Debug, PartialEq, Clone)]
-pub enum ReferenceValue {
-    Function {
-        argument_count: u16,
-        implementation: FunctionImplementation,
-    },
 }
 
 #[derive(Clone)]
@@ -97,14 +67,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_noop() {
-        assert!(PrimitiveValue::Noop.is_noop());
-    }
-
-    #[test]
     fn test_integer() {
-        let a = PrimitiveValue::Integer(1);
-        let b = PrimitiveValue::Integer(2);
+        let a = Object::Integer(1);
+        let b = Object::Integer(2);
 
         let a_value = a.get_integer().unwrap();
         let b_value = b.get_integer().unwrap();
@@ -114,8 +79,8 @@ mod tests {
 
     #[test]
     fn test_float() {
-        let a = PrimitiveValue::Float(1.0);
-        let b = PrimitiveValue::Float(2.0);
+        let a = Object::Float(1.0);
+        let b = Object::Float(2.0);
 
         let a_value = a.get_float().unwrap();
         let b_value = b.get_float().unwrap();
@@ -125,31 +90,30 @@ mod tests {
 
     #[test]
     fn test_builtin_function() {
-        let function = ReferenceValue::Function {
+        let function = Object::Function {
             argument_count: 1,
             implementation: FunctionImplementation::Builtin(Rc::new(|args| {
                 assert_eq!(args.len(), 1);
 
                 match args[0] {
-                    Object::Primitive(PrimitiveValue::Integer(x)) => {
-                        Object::Primitive(PrimitiveValue::Integer(x + 1))
-                    }
+                    Object::Integer(x) => Object::Integer(x + 1),
                     _ => unreachable!(),
                 }
             })),
         };
 
         match function {
-            ReferenceValue::Function {
+            Object::Function {
                 argument_count,
                 implementation,
             } => {
-                let sixty_eight = Object::Primitive(PrimitiveValue::Integer(68));
-                let sixty_nine = Object::Primitive(PrimitiveValue::Integer(69));
+                let sixty_eight = Object::Integer(68);
+                let sixty_nine = Object::Integer(69);
 
                 assert_eq!(argument_count, 1);
                 assert_eq!(implementation.call(vec![sixty_eight]), sixty_nine);
             }
+            _ => unreachable!(),
         }
     }
 }

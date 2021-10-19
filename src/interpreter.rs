@@ -1,14 +1,12 @@
 use crate::object::FunctionImplementation;
 use crate::object::Object;
-use crate::object::PrimitiveValue;
-use crate::object::ReferenceValue;
 use crate::reader::Reader;
 use crate::reader::ReaderError;
 use crate::reader::Token;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum InterpreterError {
     ReadingFailed(ReaderError),
     ExpectedAnExpression(String),
@@ -24,54 +22,24 @@ type InterpreterResult = Result<Object, InterpreterError>;
 
 impl Bloodbath {
     pub fn new() -> Self {
-        let mut environment = HashMap::new();
-
-        let make_builtin = |argument_count, builtin| {
-            Object::Reference(ReferenceValue::Function {
-                argument_count,
-                implementation: FunctionImplementation::Builtin(Rc::new(builtin)),
-            })
+        let mut us = Self {
+            environment: HashMap::new(),
         };
 
-        environment.insert(
-            "+".into(),
-            make_builtin(2, |args: Vec<Object>| {
-                let noop = Object::Primitive(PrimitiveValue::Noop);
+        us.register("+".into(), 2, crate::builtins::add);
+        us.register("-".into(), 2, crate::builtins::sub);
+        us.register("*".into(), 2, crate::builtins::mul);
+        us.register("/".into(), 2, crate::builtins::div);
 
-                match args[0] {
-                    Object::Primitive(PrimitiveValue::Integer(x)) => match args[1] {
-                        Object::Primitive(PrimitiveValue::Integer(y)) => {
-                            Object::Primitive(PrimitiveValue::Integer(x + y))
-                        }
-                        Object::Primitive(PrimitiveValue::Float(y)) => {
-                            Object::Primitive(PrimitiveValue::Float(x as f64 + y))
-                        }
-                        _ => noop,
-                    },
-                    Object::Primitive(PrimitiveValue::Float(x)) => match args[1] {
-                        Object::Primitive(PrimitiveValue::Integer(y)) => {
-                            Object::Primitive(PrimitiveValue::Float(x + y as f64))
-                        }
-                        Object::Primitive(PrimitiveValue::Float(y)) => {
-                            Object::Primitive(PrimitiveValue::Float(x + y))
-                        }
-                        _ => noop,
-                    },
-                    _ => noop,
-                }
-            }),
-        );
-
-        Self { environment }
+        us
     }
 
     pub fn variable_get(&mut self, variable_name: &String) -> Object {
         match self.environment.get(variable_name) {
             Some(value) => value.clone(),
             None => {
-                let noop = Object::Primitive(PrimitiveValue::Noop);
-                self.environment.insert(variable_name.clone(), noop.clone());
-                noop
+                self.environment.insert(variable_name.clone(), Object::Noop);
+                Object::Noop
             }
         }
     }
@@ -80,14 +48,27 @@ impl Bloodbath {
         self.environment.insert(variable_name, new_value.clone());
     }
 
+    pub fn register<T>(&mut self, function_name: String, argument_count: u16, builtin: T)
+    where
+        T: Fn(Vec<Object>) -> Object + 'static,
+    {
+        self.variable_set(
+            function_name,
+            Object::Function {
+                argument_count,
+                implementation: FunctionImplementation::Builtin(Rc::new(builtin)),
+            },
+        );
+    }
+
     fn eval_variable(&mut self, name: &String, tokens: &mut Vec<Token>) -> InterpreterResult {
         let variable_value = self.variable_get(&name);
 
         match variable_value {
-            Object::Reference(ReferenceValue::Function {
+            Object::Function {
                 argument_count,
                 implementation,
-            }) => {
+            } => {
                 let mut arguments = Vec::new();
 
                 for count in 0..argument_count {
@@ -117,7 +98,7 @@ impl Bloodbath {
         return match tokens.remove(0) {
             Token::Identifier(name) => {
                 if name == "noop" {
-                    Ok(Object::Primitive(PrimitiveValue::Noop))
+                    Ok(Object::Noop)
                 } else if ["identity", "set"].contains(&name.as_str()) {
                     Err(InterpreterError::IllegalIdentity(format!(
                         "Cannot use `identity` on syntax form `{}`",
@@ -127,8 +108,8 @@ impl Bloodbath {
                     Ok(self.variable_get(&name))
                 }
             }
-            Token::IntegerConstant(value) => Ok(Object::Primitive(PrimitiveValue::Integer(value))),
-            Token::FloatConstant(value) => Ok(Object::Primitive(PrimitiveValue::Float(value))),
+            Token::IntegerConstant(value) => Ok(Object::Integer(value)),
+            Token::FloatConstant(value) => Ok(Object::Float(value)),
         };
     }
 
@@ -156,7 +137,7 @@ impl Bloodbath {
         match tokens.remove(0) {
             Token::Identifier(name) => {
                 if name == "noop" {
-                    return Ok(Object::Primitive(PrimitiveValue::Noop));
+                    return Ok(Object::Noop);
                 } else if name == "identity" {
                     self.eval_identity(tokens)
                 } else if name == "set" {
@@ -165,8 +146,8 @@ impl Bloodbath {
                     self.eval_variable(&name, tokens)
                 }
             }
-            Token::IntegerConstant(value) => Ok(Object::Primitive(PrimitiveValue::Integer(value))),
-            Token::FloatConstant(value) => Ok(Object::Primitive(PrimitiveValue::Float(value))),
+            Token::IntegerConstant(value) => Ok(Object::Integer(value)),
+            Token::FloatConstant(value) => Ok(Object::Float(value)),
         }
     }
 
@@ -182,7 +163,7 @@ impl Bloodbath {
             .tokenise()
             .or_else(|err| Err(InterpreterError::ReadingFailed(err)))?;
 
-        let mut result = Object::Primitive(PrimitiveValue::Noop);
+        let mut result = Object::Noop;
 
         while !tokens.is_empty() {
             result = self.eval_expression(&mut tokens)?;
@@ -200,59 +181,21 @@ mod tests {
     fn test_eval() {
         let mut bloodbath = Bloodbath::new();
 
-        assert_eq!(
-            bloodbath.eval_str("noop").unwrap(),
-            Object::Primitive(PrimitiveValue::Noop),
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("identity 1").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(1))
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("+ 1 2").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(3)),
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("+ 1 + 1 1").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(3)),
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("+ + 1 1 1").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(3)),
-        );
+        assert_eq!(bloodbath.eval_str("noop"), Ok(Object::Noop),);
+        assert_eq!(bloodbath.eval_str("identity 1"), Ok(Object::Integer(1)));
+        assert_eq!(bloodbath.eval_str("+ 1 2"), Ok(Object::Integer(3)));
+        assert_eq!(bloodbath.eval_str("+ 1 + 1 1"), Ok(Object::Integer(3)));
+        assert_eq!(bloodbath.eval_str("+ + 1 1 1"), Ok(Object::Integer(3)));
     }
 
     #[test]
     fn test_variables() {
         let mut bloodbath = Bloodbath::new();
 
-        assert_eq!(
-            bloodbath.eval_str("set a 10").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(10))
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("set b 20").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(20))
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("set c + a b").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(30))
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("set + c").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(30))
-        );
-
-        assert_eq!(
-            bloodbath.eval_str("+").unwrap(),
-            Object::Primitive(PrimitiveValue::Integer(30))
-        );
+        assert_eq!(bloodbath.eval_str("set a 10"), Ok(Object::Integer(10)));
+        assert_eq!(bloodbath.eval_str("set b 20"), Ok(Object::Integer(20)));
+        assert_eq!(bloodbath.eval_str("set c + a b"), Ok(Object::Integer(30)));
+        assert_eq!(bloodbath.eval_str("set + c"), Ok(Object::Integer(30)));
+        assert_eq!(bloodbath.eval_str("+"), Ok(Object::Integer(30)));
     }
 }
