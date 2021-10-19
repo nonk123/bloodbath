@@ -11,6 +11,7 @@ pub enum Expression {
     Variable(String),
     Set(String, Box<Expression>),
     FunctionCall(FunctionImplementation, Vec<Expression>),
+    If(Box<Expression>, Box<Expression>, Option<Box<Expression>>),
 }
 
 impl Expression {
@@ -27,6 +28,13 @@ impl Expression {
                 let args = args.iter().map(|x| x.evaluate(interpreter)).collect();
                 implementation.call(args)
             }
+            Self::If(condition, if_true, otherwise) => match condition.evaluate(interpreter) {
+                Object::Noop => match otherwise {
+                    Some(otherwise) => otherwise.evaluate(interpreter),
+                    None => Object::Noop,
+                },
+                _ => if_true.evaluate(interpreter),
+            },
         }
     }
 }
@@ -36,7 +44,6 @@ pub enum ParserError {
     ReadingFailed(ReaderError),
     ExpectedAnExpression(String),
     ExpectedAnIdentifier(String),
-    IllegalIdentity(String),
 }
 
 pub struct Bloodbath {
@@ -87,6 +94,44 @@ impl Bloodbath {
         );
     }
 
+    fn expect_keyword(
+        &mut self,
+        tokens: &mut Vec<Token>,
+        expected_name: &str,
+    ) -> Result<(), ParserError> {
+        let err = ParserError::ExpectedAnIdentifier(format!("Keyword `{}`", expected_name));
+
+        if tokens.is_empty() {
+            return Err(err);
+        }
+
+        match tokens.remove(0) {
+            Token::Identifier(name) => {
+                if name == expected_name.to_string() {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+            _ => Err(err),
+        }
+    }
+
+    fn check_keyword(&mut self, tokens: &mut Vec<Token>, expected_name: &str) -> bool {
+        !tokens.is_empty()
+            && match &tokens[0] {
+                Token::Identifier(name) => {
+                    if *name == expected_name.to_string() {
+                        tokens.remove(0);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+    }
+
     fn parse_variable(&mut self, name: &String, tokens: &mut Vec<Token>) -> ParserResult {
         let variable_value = self.variable_get(&name);
 
@@ -125,11 +170,6 @@ impl Bloodbath {
             Token::Identifier(name) => {
                 if name == "noop" {
                     Ok(Expression::Constant(Object::Noop))
-                } else if ["identity", "set"].contains(&name.as_str()) {
-                    Err(ParserError::IllegalIdentity(format!(
-                        "Cannot use `identity` on syntax form `{}`",
-                        name
-                    )))
                 } else {
                     Ok(Expression::Variable(name))
                 }
@@ -161,6 +201,40 @@ impl Bloodbath {
         Ok(Expression::Set(variable_name, Box::new(new_value)))
     }
 
+    fn parse_if(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
+        if tokens.is_empty() {
+            return Err(ParserError::ExpectedAnExpression(
+                "`if` must be followed by a condition".into(),
+            ));
+        }
+
+        let condition = Box::new(self.parse_expression(tokens)?);
+
+        self.expect_keyword(tokens, "then")?;
+
+        if tokens.is_empty() {
+            return Err(ParserError::ExpectedAnExpression(
+                "`then` must be followed by an expression".into(),
+            ));
+        }
+
+        let if_true = Box::new(self.parse_expression(tokens)?);
+
+        let otherwise = if self.check_keyword(tokens, "else") {
+            if tokens.is_empty() {
+                return Err(ParserError::ExpectedAnExpression(
+                    "`else` must be followed by an expression".into(),
+                ));
+            }
+
+            Some(Box::new(self.parse_expression(tokens)?))
+        } else {
+            None
+        };
+
+        Ok(Expression::If(condition, if_true, otherwise))
+    }
+
     fn parse_expression(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         match tokens.remove(0) {
             Token::Identifier(name) => {
@@ -170,6 +244,8 @@ impl Bloodbath {
                     self.parse_identity(tokens)
                 } else if name == "set" {
                     self.parse_set(tokens)
+                } else if name == "if" {
+                    self.parse_if(tokens)
                 } else {
                     self.parse_variable(&name, tokens)
                 }
@@ -214,6 +290,23 @@ mod tests {
         assert_eq!(bloodbath.eval_str("+ 1 2"), Ok(Object::Integer(3)));
         assert_eq!(bloodbath.eval_str("+ 1 + 1 1"), Ok(Object::Integer(3)));
         assert_eq!(bloodbath.eval_str("+ + 1 1 1"), Ok(Object::Integer(3)));
+
+        assert_eq!(
+            bloodbath.eval_str("if 0 then 42 else 0"),
+            Ok(Object::Integer(42))
+        );
+
+        assert_eq!(
+            bloodbath.eval_str("if noop then 42 else 0"),
+            Ok(Object::Integer(0))
+        );
+
+        assert_eq!(bloodbath.eval_str("if noop then 42"), Ok(Object::Noop));
+
+        assert_eq!(
+            bloodbath.eval_str("if noop then 1 else if noop then 2 else 3"),
+            Ok(Object::Integer(3))
+        );
     }
 
     #[test]
@@ -225,5 +318,6 @@ mod tests {
         assert_eq!(bloodbath.eval_str("set c + a b"), Ok(Object::Integer(30)));
         assert_eq!(bloodbath.eval_str("set + c"), Ok(Object::Integer(30)));
         assert_eq!(bloodbath.eval_str("+"), Ok(Object::Integer(30)));
+        assert_eq!(bloodbath.eval_str("identity +"), Ok(Object::Integer(30)));
     }
 }

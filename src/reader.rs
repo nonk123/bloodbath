@@ -208,5 +208,13 @@ mod tests {
             Token::FloatConstant(value) => assert!((value + 1.0).abs() <= 1e-3),
             _ => unreachable!(),
         }
+
+        let tokens = Reader::new("set a noop set b a".into()).tokenise().unwrap();
+
+        assert_eq!(tokens.len(), 6);
+
+        for (index, expected_value) in ["set", "a", "noop", "set", "b", "a"].iter().enumerate() {
+            assert_eq!(tokens[index], Token::Identifier(expected_value.to_string()));
+        }
     }
 }
