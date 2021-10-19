@@ -6,8 +6,33 @@ use crate::reader::Token;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+pub enum Expression {
+    Constant(Object),
+    Variable(String),
+    Set(String, Box<Expression>),
+    FunctionCall(FunctionImplementation, Vec<Expression>),
+}
+
+impl Expression {
+    pub fn evaluate(&self, interpreter: &mut Bloodbath) -> Object {
+        match self {
+            Self::Constant(result) => result.clone(),
+            Self::Variable(name) => interpreter.variable_get(&name),
+            Self::Set(name, value) => {
+                let value = value.evaluate(interpreter);
+                interpreter.variable_set(&name, value.clone());
+                value
+            }
+            Self::FunctionCall(implementation, args) => {
+                let args = args.iter().map(|x| x.evaluate(interpreter)).collect();
+                implementation.call(args)
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
-pub enum InterpreterError {
+pub enum ParserError {
     ReadingFailed(ReaderError),
     ExpectedAnExpression(String),
     ExpectedAnIdentifier(String),
@@ -18,7 +43,7 @@ pub struct Bloodbath {
     environment: HashMap<String, Object>,
 }
 
-type InterpreterResult = Result<Object, InterpreterError>;
+type ParserResult = Result<Expression, ParserError>;
 
 impl Bloodbath {
     pub fn new() -> Self {
@@ -26,10 +51,10 @@ impl Bloodbath {
             environment: HashMap::new(),
         };
 
-        us.register("+".into(), 2, crate::builtins::add);
-        us.register("-".into(), 2, crate::builtins::sub);
-        us.register("*".into(), 2, crate::builtins::mul);
-        us.register("/".into(), 2, crate::builtins::div);
+        us.register(&"+".into(), 2, crate::builtins::add);
+        us.register(&"-".into(), 2, crate::builtins::sub);
+        us.register(&"*".into(), 2, crate::builtins::mul);
+        us.register(&"/".into(), 2, crate::builtins::div);
 
         us
     }
@@ -38,17 +63,18 @@ impl Bloodbath {
         match self.environment.get(variable_name) {
             Some(value) => value.clone(),
             None => {
-                self.environment.insert(variable_name.clone(), Object::Noop);
+                self.variable_set(variable_name, Object::Noop);
                 Object::Noop
             }
         }
     }
 
-    pub fn variable_set(&mut self, variable_name: String, new_value: Object) {
-        self.environment.insert(variable_name, new_value.clone());
+    pub fn variable_set(&mut self, variable_name: &String, new_value: Object) {
+        self.environment
+            .insert(variable_name.clone(), new_value.clone());
     }
 
-    pub fn register<T>(&mut self, function_name: String, argument_count: u16, builtin: T)
+    pub fn register<T>(&mut self, function_name: &String, argument_count: u16, builtin: T)
     where
         T: Fn(Vec<Object>) -> Object + 'static,
     {
@@ -61,7 +87,7 @@ impl Bloodbath {
         );
     }
 
-    fn eval_variable(&mut self, name: &String, tokens: &mut Vec<Token>) -> InterpreterResult {
+    fn parse_variable(&mut self, name: &String, tokens: &mut Vec<Token>) -> ParserResult {
         let variable_value = self.variable_get(&name);
 
         match variable_value {
@@ -73,24 +99,24 @@ impl Bloodbath {
 
                 for count in 0..argument_count {
                     if tokens.is_empty() {
-                        return Err(InterpreterError::ExpectedAnExpression(format!(
+                        return Err(ParserError::ExpectedAnExpression(format!(
                             "Expected {} arguments after `{}`, got {}",
                             argument_count, name, count
                         )));
                     }
 
-                    arguments.push(self.eval_expression(tokens)?);
+                    arguments.push(self.parse_expression(tokens)?);
                 }
 
-                Ok(implementation.call(arguments))
+                Ok(Expression::FunctionCall(implementation, arguments))
             }
-            _ => Ok(variable_value.clone()),
+            _ => Ok(Expression::Variable(name.clone())),
         }
     }
 
-    fn eval_identity(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+    fn parse_identity(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         if tokens.is_empty() {
-            return Err(InterpreterError::ExpectedAnExpression(
+            return Err(ParserError::ExpectedAnExpression(
                 "`identity` must be followed by a constant or a variable name".into(),
             ));
         }
@@ -98,75 +124,77 @@ impl Bloodbath {
         return match tokens.remove(0) {
             Token::Identifier(name) => {
                 if name == "noop" {
-                    Ok(Object::Noop)
+                    Ok(Expression::Constant(Object::Noop))
                 } else if ["identity", "set"].contains(&name.as_str()) {
-                    Err(InterpreterError::IllegalIdentity(format!(
+                    Err(ParserError::IllegalIdentity(format!(
                         "Cannot use `identity` on syntax form `{}`",
                         name
                     )))
                 } else {
-                    Ok(self.variable_get(&name))
+                    Ok(Expression::Variable(name))
                 }
             }
-            Token::IntegerConstant(value) => Ok(Object::Integer(value)),
-            Token::FloatConstant(value) => Ok(Object::Float(value)),
+            Token::IntegerConstant(value) => Ok(Expression::Constant(Object::Integer(value))),
+            Token::FloatConstant(value) => Ok(Expression::Constant(Object::Float(value))),
         };
     }
 
-    fn eval_set(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+    fn parse_set(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         let usage =
             "`set` must be followed by a variable name and the variable's new value".to_string();
 
+        if tokens.is_empty() {
+            return Err(ParserError::ExpectedAnIdentifier(usage));
+        }
+
         let variable_name = match tokens.remove(0) {
             Token::Identifier(name) => name,
-            _ => return Err(InterpreterError::ExpectedAnIdentifier(usage)),
+            _ => return Err(ParserError::ExpectedAnIdentifier(usage)),
         };
 
         if tokens.is_empty() {
-            return Err(InterpreterError::ExpectedAnIdentifier(usage));
+            return Err(ParserError::ExpectedAnExpression(usage));
         }
 
-        let new_value = self.eval_expression(tokens)?;
+        let new_value = self.parse_expression(tokens)?;
 
-        self.variable_set(variable_name, new_value.clone());
-
-        Ok(new_value)
+        Ok(Expression::Set(variable_name, Box::new(new_value)))
     }
 
-    fn eval_expression(&mut self, tokens: &mut Vec<Token>) -> InterpreterResult {
+    fn parse_expression(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         match tokens.remove(0) {
             Token::Identifier(name) => {
                 if name == "noop" {
-                    return Ok(Object::Noop);
+                    return Ok(Expression::Constant(Object::Noop));
                 } else if name == "identity" {
-                    self.eval_identity(tokens)
+                    self.parse_identity(tokens)
                 } else if name == "set" {
-                    self.eval_set(tokens)
+                    self.parse_set(tokens)
                 } else {
-                    self.eval_variable(&name, tokens)
+                    self.parse_variable(&name, tokens)
                 }
             }
-            Token::IntegerConstant(value) => Ok(Object::Integer(value)),
-            Token::FloatConstant(value) => Ok(Object::Float(value)),
+            Token::IntegerConstant(value) => Ok(Expression::Constant(Object::Integer(value))),
+            Token::FloatConstant(value) => Ok(Expression::Constant(Object::Float(value))),
         }
     }
 
     #[cfg(test)]
-    pub fn eval_str(&mut self, input: &str) -> InterpreterResult {
+    pub fn eval_str(&mut self, input: &str) -> Result<Object, ParserError> {
         self.eval(input.into())
     }
 
-    pub fn eval(&mut self, input: String) -> InterpreterResult {
+    pub fn eval(&mut self, input: String) -> Result<Object, ParserError> {
         let mut reader = Reader::new(input);
 
         let mut tokens = reader
             .tokenise()
-            .or_else(|err| Err(InterpreterError::ReadingFailed(err)))?;
+            .or_else(|err| Err(ParserError::ReadingFailed(err)))?;
 
         let mut result = Object::Noop;
 
         while !tokens.is_empty() {
-            result = self.eval_expression(&mut tokens)?;
+            result = self.parse_expression(&mut tokens)?.evaluate(self);
         }
 
         Ok(result)

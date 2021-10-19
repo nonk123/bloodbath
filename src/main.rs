@@ -1,5 +1,5 @@
 use crate::interpreter::Bloodbath;
-use crate::interpreter::InterpreterError;
+use crate::interpreter::ParserError;
 use crate::reader::ReaderError;
 use std::io::Write;
 
@@ -45,10 +45,7 @@ fn main() {
 
         match bloodbath.eval(line) {
             Ok(object) => println!("{:?}", object),
-            Err(InterpreterError::ExpectedAnExpression(cause)) => println!("{}", cause),
-            Err(InterpreterError::ExpectedAnIdentifier(cause)) => println!("{}", cause),
-            Err(InterpreterError::IllegalIdentity(cause)) => println!("{}", cause),
-            Err(InterpreterError::ReadingFailed(err)) => match err {
+            Err(ParserError::ReadingFailed(err)) => match err {
                 ReaderError::EoF => println!("Unexpected end of file"),
                 ReaderError::ExpectedADigit(bad_char) => {
                     println!("Expected a digit, got '{}'", bad_char)
@@ -57,6 +54,7 @@ fn main() {
                     println!("Unexpected character: '{}'", bad_char)
                 }
             },
+            Err(err) => println!("{:?}", err),
         }
     }
 }
