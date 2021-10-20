@@ -47,9 +47,6 @@ fn main() {
             Ok(object) => println!("{:?}", object),
             Err(ParserError::ReadingFailed(err)) => match err {
                 ReaderError::EoF => println!("Unexpected end of file"),
-                ReaderError::ExpectedADigit(bad_char) => {
-                    println!("Expected a digit, got '{}'", bad_char)
-                }
                 ReaderError::UnexpectedCharacter(bad_char) => {
                     println!("Unexpected character: '{}'", bad_char)
                 }

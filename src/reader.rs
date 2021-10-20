@@ -3,12 +3,13 @@ pub enum Token {
     Identifier(String),
     IntegerConstant(i64),
     FloatConstant(f64),
+    LeftBrace,
+    RightBrace,
 }
 
 #[derive(Debug, PartialEq)]
 pub enum ReaderError {
     EoF,
-    ExpectedADigit(char),
     UnexpectedCharacter(char),
 }
 
@@ -69,7 +70,7 @@ impl Reader {
             let digit = self.current()? as i64 - '0' as i64;
 
             if digit < 0 || digit > 9 {
-                return Err(ReaderError::ExpectedADigit(self.current()?));
+                return Ok(Token::IntegerConstant(sign * whole));
             }
 
             whole *= 10;
@@ -89,7 +90,11 @@ impl Reader {
                 let digit = self.current()? as i64 - '0' as i64;
 
                 if digit < 0 || digit > 9 {
-                    return Err(ReaderError::ExpectedADigit(self.current()?));
+                    let fractional = (fractional.unwrap() / fractional_multiplier) as f64;
+
+                    return Ok(Token::FloatConstant(
+                        sign as f64 * (whole as f64 + fractional),
+                    ));
                 }
 
                 fractional = Some(fractional.unwrap() * 10 + digit);
@@ -140,7 +145,11 @@ impl Reader {
             }
 
             if !is_legal {
-                return Err(ReaderError::UnexpectedCharacter(self.current()?));
+                if self.current()? == '{' || self.current()? == '}' {
+                    return Ok(Token::Identifier(identifier));
+                } else {
+                    return Err(ReaderError::UnexpectedCharacter(self.current()?));
+                }
             }
 
             identifier.push(self.current()?);
@@ -171,6 +180,12 @@ impl Reader {
                 || self.current()? == '-' && ('0'..='9').contains(&self.peek(1)?)
             {
                 tokens.push(self.read_number()?);
+            } else if self.current()? == '{' {
+                tokens.push(Token::LeftBrace);
+                self.next_or_eof()?;
+            } else if self.current()? == '}' {
+                tokens.push(Token::RightBrace);
+                self.next_or_eof()?;
             } else {
                 tokens.push(self.read_identifier()?);
             }

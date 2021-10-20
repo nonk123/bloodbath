@@ -9,6 +9,7 @@ use std::rc::Rc;
 pub enum Expression {
     Constant(Object),
     Variable(String),
+    Compound(Vec<Expression>),
     Set(String, Box<Expression>),
     FunctionCall(FunctionImplementation, Vec<Expression>),
     If(Box<Expression>, Box<Expression>, Option<Box<Expression>>),
@@ -19,6 +20,15 @@ impl Expression {
         match self {
             Self::Constant(result) => result.clone(),
             Self::Variable(name) => interpreter.variable_get(&name),
+            Self::Compound(expressions) => {
+                let mut result = Object::Noop;
+
+                for expression in expressions {
+                    result = expression.evaluate(interpreter);
+                }
+
+                result
+            }
             Self::Set(name, value) => {
                 let value = value.evaluate(interpreter);
                 interpreter.variable_set(&name, value.clone());
@@ -44,6 +54,8 @@ pub enum ParserError {
     ReadingFailed(ReaderError),
     ExpectedAnExpression(String),
     ExpectedAnIdentifier(String),
+    UnterminatedCompoundExpression,
+    UnexpectedBrace,
 }
 
 pub struct Bloodbath {
@@ -159,6 +171,27 @@ impl Bloodbath {
         }
     }
 
+    fn parse_compound(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
+        if tokens.is_empty() {
+            return Err(ParserError::UnterminatedCompoundExpression);
+        }
+
+        let mut expressions = Vec::new();
+
+        loop {
+            if tokens[0] == Token::RightBrace {
+                tokens.remove(0);
+                return Ok(Expression::Compound(expressions));
+            }
+
+            expressions.push(self.parse_expression(tokens)?);
+
+            if tokens.is_empty() {
+                return Err(ParserError::UnterminatedCompoundExpression);
+            }
+        }
+    }
+
     fn parse_identity(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         if tokens.is_empty() {
             return Err(ParserError::ExpectedAnExpression(
@@ -176,6 +209,7 @@ impl Bloodbath {
             }
             Token::IntegerConstant(value) => Ok(Expression::Constant(Object::Integer(value))),
             Token::FloatConstant(value) => Ok(Expression::Constant(Object::Float(value))),
+            Token::LeftBrace | Token::RightBrace => Err(ParserError::UnexpectedBrace),
         };
     }
 
@@ -237,21 +271,17 @@ impl Bloodbath {
 
     fn parse_expression(&mut self, tokens: &mut Vec<Token>) -> ParserResult {
         match tokens.remove(0) {
-            Token::Identifier(name) => {
-                if name == "noop" {
-                    return Ok(Expression::Constant(Object::Noop));
-                } else if name == "identity" {
-                    self.parse_identity(tokens)
-                } else if name == "set" {
-                    self.parse_set(tokens)
-                } else if name == "if" {
-                    self.parse_if(tokens)
-                } else {
-                    self.parse_variable(&name, tokens)
-                }
-            }
+            Token::Identifier(name) => match name.as_str() {
+                "noop" => Ok(Expression::Constant(Object::Noop)),
+                "identity" => self.parse_identity(tokens),
+                "set" => self.parse_set(tokens),
+                "if" => self.parse_if(tokens),
+                _ => self.parse_variable(&name, tokens),
+            },
             Token::IntegerConstant(value) => Ok(Expression::Constant(Object::Integer(value))),
             Token::FloatConstant(value) => Ok(Expression::Constant(Object::Float(value))),
+            Token::LeftBrace => self.parse_compound(tokens),
+            Token::RightBrace => Err(ParserError::UnexpectedBrace),
         }
     }
 
@@ -319,5 +349,19 @@ mod tests {
         assert_eq!(bloodbath.eval_str("set + c"), Ok(Object::Integer(30)));
         assert_eq!(bloodbath.eval_str("+"), Ok(Object::Integer(30)));
         assert_eq!(bloodbath.eval_str("identity +"), Ok(Object::Integer(30)));
+    }
+
+    #[test]
+    fn test_compound() {
+        let mut bloodbath = Bloodbath::new();
+
+        assert_eq!(bloodbath.eval_str("{1 2 3}"), Ok(Object::Integer(3)));
+        assert_eq!(bloodbath.eval_str("{set a 5}"), Ok(Object::Integer(5)));
+        assert_eq!(bloodbath.eval_str("{set b + 5 a}"), Ok(Object::Integer(10)));
+
+        assert_eq!(
+            bloodbath.eval_str("if {a noop} then 1 else 0"),
+            Ok(Object::Integer(0))
+        );
     }
 }
